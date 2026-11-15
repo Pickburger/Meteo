@@ -863,20 +863,52 @@ function buildOSM(json,v){
   return L;
 }
 const OVP=["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
-function firstOk(ps){return new Promise((res,rej)=>{let n=ps.length,errs=[];ps.forEach((p,i)=>p.then(res,e=>{errs[i]=e&&e.message||String(e);if(--n===0)rej(new Error(errs.join(" · ")))}))})}
-function oneTry(ep,q,ms){
+const host=ep=>ep.split("/")[2];
+function tryOne(ep,q,ms){
   return Promise.race([
-    fetch(ep+"?data="+encodeURIComponent(q)).then(r=>{if(!r.ok)throw new Error(ep.split("/")[2]+" HTTP "+r.status);return r.json()}),
-    new Promise((_,rej)=>setTimeout(()=>rej(new Error(ep.split("/")[2]+" délai")),ms))
+    fetch(ep+"?data="+encodeURIComponent(q)).then(r=>{if(!r.ok)throw new Error(host(ep)+" HTTP "+r.status);return r.json()}),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error(host(ep)+" délai")),ms))
   ]);
 }
-// Les miroirs sont interrogés en parallèle : le premier qui répond gagne.
-const fetchQ=q=>firstOk(OVP.map(ep=>oneTry(ep,q,22000)));
-async function fetchOSM(v){
-  const [qa,qb]=osmQueries(v);
-  const [a,b]=await Promise.allSettled([fetchQ(qa),fetchQ(qb)]);
-  if(a.status!=="fulfilled")throw a.reason;
-  return{elements:(a.value.elements||[]).concat(b.status==="fulfilled"?(b.value.elements||[]):[])};
+// Une requête = un quart de la zone. On essaie un serveur, puis le suivant.
+async function fetchChain(q,start){
+  let err;
+  for(let k=0;k<2;k++){
+    try{return await tryOne(OVP[(start+k)%OVP.length],q,28000)}catch(e){err=e}
+  }
+  throw err;
+}
+function quadQueries(v){
+  const dLat=HALF/110574,dLon=HALF/(111320*Math.cos(v.lat*Math.PI/180)),out=[];
+  for(let iy=0;iy<2;iy++)for(let ix=0;ix<2;ix++){
+    const s=v.lat-dLat+iy*dLat,n=s+dLat,w=v.lon-dLon+ix*dLon,e=w+dLon;
+    const bb=[s,w,n,e].map(x=>x.toFixed(5)).join(",");
+    out.push({kind:"b",q:'[out:json][timeout:25];way["building"]('+bb+');out geom qt;'});
+    out.push({kind:"o",q:'[out:json][timeout:25];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|pedestrian)$"]('+bb+');way["natural"="water"]('+bb+');way["waterway"="riverbank"]('+bb+');way["leisure"~"park|garden|pitch|playground"]('+bb+');way["landuse"~"grass|forest|recreation_ground|cemetery|meadow"]('+bb+'););out geom qt;'});
+  }
+  return out;
+}
+async function pingAll(){
+  const res=[];
+  await Promise.all(OVP.map(async ep=>{
+    const t0=Date.now();
+    try{await Promise.race([fetch(ep.replace("interpreter","status")).then(r=>r.text()),new Promise((_,rej)=>setTimeout(()=>rej(0),7000))]);res.push(host(ep)+" répond ("+(Date.now()-t0)+" ms)")}
+    catch(e){res.push(host(ep)+" injoignable")}
+  }));
+  return res.join(", ");
+}
+async function fetchOSM(v,onProgress){
+  const Q=quadQueries(v),els=new Map();let done=0,okB=0,totB=Q.filter(x=>x.kind==="b").length,lastErr;
+  await Promise.all(Q.map(async(x,i)=>{
+    try{
+      const j=await fetchChain(x.q,i%OVP.length);
+      for(const el of j.elements||[])els.set(el.type+el.id,el);
+      if(x.kind==="b")okB++;
+    }catch(e){lastErr=e}
+    done++;onProgress&&onProgress(done,Q.length);
+  }));
+  if(okB<Math.ceil(totB/2)){const e=new Error("délai ou refus des serveurs");e.diag=true;e.detail=lastErr&&lastErr.message;throw e}
+  return{elements:[...els.values()],partial:okB<totB};
 }
 const OSMC={};
 async function loadOSM(v,force){
@@ -884,14 +916,17 @@ async function loadOSM(v,force){
   S.osmKey=key;S.mapFail=false;
   const apply=L=>{if(S.osmKey!==key)return;S.layout=L;S.cars=L.carPaths;S.mapMsg="";refreshMsg()};
   if(!force&&OSMC[key]){apply(OSMC[key]);return}
-  S.mapMsg="Chargement du vrai plan de la ville… (jusqu'à 25 s)";refreshMsg();
+  S.mapMsg="Chargement du vrai plan de la ville…";refreshMsg();
   try{
-    const json=await fetchOSM(v);
+    const json=await fetchOSM(v,(d,n)=>{if(S.osmKey===key){S.mapMsg="Chargement du vrai plan de la ville… "+d+"/"+n;refreshMsg()}});
     const L=buildOSM(json,v);
     if(L.boxes.length<5)throw new Error("peu de bâtiments trouvés");
     OSMC[key]=L;apply(L);
   }catch(e){
-    if(S.osmKey===key){S.mapFail=true;S.mapMsg="Plan réel indisponible ("+(e&&e.message||"erreur")+"). Ville stylisée affichée. Touche ici pour réessayer.";refreshMsg()}
+    if(S.osmKey!==key)return;
+    let diag="";
+    if(e&&e.diag){S.mapMsg="Plan réel : test de connexion…";refreshMsg();try{diag=" Serveurs : "+await pingAll()+"."}catch(_){}}
+    if(S.osmKey===key){S.mapFail=true;S.mapMsg="Plan réel indisponible ("+(e&&e.message||"erreur")+(e&&e.detail?" ; "+e.detail:"")+")."+diag+" Ville stylisée affichée. Touche ici pour réessayer.";refreshMsg()}
   }
 }
 function refreshMsg(){
