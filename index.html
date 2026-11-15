@@ -750,6 +750,7 @@ function init(){
   $("#play").onclick=()=>{S.play=!S.play;if(S.play)S.live=false;$("#play").textContent=S.play?"⏸":"▶"};
   $("#live").onclick=()=>{S.live=true;S.play=false;$("#play").textContent="▶";S.override="auto";chipsWx()};
   chipsWx();
+  $("#demo").onclick=()=>{if(S.mapFail&&S.city)loadOSM(S.city,true)};
   S.cv.addEventListener("pointerdown",e=>{S.drag=true;S.lx=e.clientX;S.idle=0;try{S.cv.setPointerCapture(e.pointerId)}catch(_){}});
   S.cv.addEventListener("pointermove",e=>{if(!S.drag)return;S.rot+=(e.clientX-S.lx)*.009;S.lx=e.clientX;S.idle=0});
   const up=()=>{S.drag=false;S.idle=0};
@@ -760,12 +761,18 @@ function init(){
 }
 
 /* ---------- Vraie ville (OpenStreetMap via Overpass) ---------- */
-const HALF=330,MPU=66,VZ=2.0; // demi-côté (m), mètres par unité, exagération verticale
+const HALF=280,MPU=56,VZ=1.8; // demi-côté (m), mètres par unité, exagération verticale
 const HW={motorway:13,trunk:12,primary:11,secondary:10,tertiary:8.5,unclassified:7,residential:7,living_street:6,service:4,pedestrian:5};
-function osmQuery(v){
+function bboxStr(v){
   const dLat=HALF/110574,dLon=HALF/(111320*Math.cos(v.lat*Math.PI/180));
-  const bb=[v.lat-dLat,v.lon-dLon,v.lat+dLat,v.lon+dLon].map(x=>x.toFixed(5)).join(",");
-  return '[out:json][timeout:25];(way["building"]('+bb+');way["highway"]('+bb+');way["natural"="water"]('+bb+');way["waterway"="riverbank"]('+bb+');way["leisure"~"park|garden|pitch|playground"]('+bb+');way["landuse"~"grass|forest|recreation_ground|cemetery|meadow"]('+bb+'););out geom tags;';
+  return [v.lat-dLat,v.lon-dLon,v.lat+dLat,v.lon+dLon].map(x=>x.toFixed(5)).join(",");
+}
+function osmQueries(v){
+  const bb=bboxStr(v);
+  return [
+    '[out:json][timeout:25];way["building"]('+bb+');out geom qt;',
+    '[out:json][timeout:25];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|pedestrian)$"]('+bb+');way["natural"="water"]('+bb+');way["waterway"="riverbank"]('+bb+');way["leisure"~"park|garden|pitch|playground"]('+bb+');way["landuse"~"grass|forest|recreation_ground|cemetery|meadow"]('+bb+'););out geom qt;'
+  ];
 }
 function inPoly(x,y,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){if((P[i][1]>y)!==(P[j][1]>y)&&x<(P[j][0]-P[i][0])*(y-P[i][1])/(P[j][1]-P[i][1])+P[i][0])c=!c}return c}
 function buildOSM(json,v){
@@ -855,32 +862,36 @@ function buildOSM(json,v){
   L.carPaths=cars.slice(0,60).sort(()=>rnd()-.5).slice(0,14).map(c=>({path:c.path,s:rnd()*c.len,dir:rnd()<.5?1:-1,sp:.35+rnd()*.3,col:cc[(rnd()*cc.length)|0]}));
   return L;
 }
+const OVP=["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+function firstOk(ps){return new Promise((res,rej)=>{let n=ps.length,errs=[];ps.forEach((p,i)=>p.then(res,e=>{errs[i]=e&&e.message||String(e);if(--n===0)rej(new Error(errs.join(" · ")))}))})}
+function oneTry(ep,q,ms){
+  return Promise.race([
+    fetch(ep+"?data="+encodeURIComponent(q)).then(r=>{if(!r.ok)throw new Error(ep.split("/")[2]+" HTTP "+r.status);return r.json()}),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error(ep.split("/")[2]+" délai")),ms))
+  ]);
+}
+// Les miroirs sont interrogés en parallèle : le premier qui répond gagne.
+const fetchQ=q=>firstOk(OVP.map(ep=>oneTry(ep,q,22000)));
 async function fetchOSM(v){
-  const q=osmQuery(v),eps=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
-  let lastErr;
-  for(const ep of eps){
-    try{
-      const res=await Promise.race([fetch(ep+"?data="+encodeURIComponent(q)),new Promise((_,rej)=>setTimeout(()=>rej(new Error("délai dépassé")),25000))]);
-      if(!res.ok)throw new Error("HTTP "+res.status);
-      return await res.json();
-    }catch(e){lastErr=e}
-  }
-  throw lastErr;
+  const [qa,qb]=osmQueries(v);
+  const [a,b]=await Promise.allSettled([fetchQ(qa),fetchQ(qb)]);
+  if(a.status!=="fulfilled")throw a.reason;
+  return{elements:(a.value.elements||[]).concat(b.status==="fulfilled"?(b.value.elements||[]):[])};
 }
 const OSMC={};
-async function loadOSM(v){
+async function loadOSM(v,force){
   const key=v.n+"|"+v.lat.toFixed(3);
-  S.osmKey=key;
+  S.osmKey=key;S.mapFail=false;
   const apply=L=>{if(S.osmKey!==key)return;S.layout=L;S.cars=L.carPaths;S.mapMsg="";refreshMsg()};
-  if(OSMC[key]){apply(OSMC[key]);return}
-  S.mapMsg="Chargement du vrai plan de la ville…";refreshMsg();
+  if(!force&&OSMC[key]){apply(OSMC[key]);return}
+  S.mapMsg="Chargement du vrai plan de la ville… (jusqu'à 25 s)";refreshMsg();
   try{
     const json=await fetchOSM(v);
     const L=buildOSM(json,v);
-    if(L.boxes.length<5)throw new Error("peu de bâtiments");
+    if(L.boxes.length<5)throw new Error("peu de bâtiments trouvés");
     OSMC[key]=L;apply(L);
   }catch(e){
-    if(S.osmKey===key){S.mapMsg="Plan réel indisponible ("+(e&&e.message||"erreur")+") : ville stylisée affichée.";refreshMsg()}
+    if(S.osmKey===key){S.mapFail=true;S.mapMsg="Plan réel indisponible ("+(e&&e.message||"erreur")+"). Ville stylisée affichée. Touche ici pour réessayer.";refreshMsg()}
   }
 }
 function refreshMsg(){
