@@ -326,6 +326,7 @@ function buildCity(seed){
     const c=rr+.5-5;
     for(const a of[-4,0,4]){L.lamps.push({x:a,y:c+.44});L.lamps.push({x:c-.44,y:a+.0})}
   }
+  for(const b of L.boxes)b.poly=rect(b.x0,b.y0,b.x1,b.y1);
   return L;
 }
 function makeCars(rnd){
@@ -374,40 +375,46 @@ function computeEnv(){
 }
 
 /* ---------- Dessin d'un prisme ---------- */
-const NORM=[[0,-1],[1,0],[0,1],[-1,0]];
-function drawBox(b,ctx){
-  const E=S.E,cs=S.cs,sn=S.sn;
-  const cor=[[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1]];
-  const P0=cor.map(p=>proj(p[0],p[1],b.z0)),P1=cor.map(p=>proj(p[0],p[1],b.z1));
-  for(let e=0;e<4;e++){
-    const n=NORM[e],nrx=n[0]*cs-n[1]*sn,nry=n[0]*sn+n[1]*cs;
-    if(nrx+nry<=.0001)continue;
-    const nd=Math.max(0,n[0]*E.sx+n[1]*E.sy)*E.cosE;
-    const A=P0[e],B=P0[(e+1)%4],A1=P1[e],B1=P1[(e+1)%4];
+const rect=(x0,y0,x1,y1)=>[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+function drawPoly(b,ctx){
+  const E=S.E,cs=S.cs,sn=S.sn,poly=b.poly,n=poly.length;
+  const P0=poly.map(p=>proj(p[0],p[1],b.z0)),P1=poly.map(p=>proj(p[0],p[1],b.z1));
+  const hPx=(b.z1-b.z0)*S.K*.9,faces=[];
+  for(let e=0;e<n;e++){
+    const p=poly[e],q=poly[(e+1)%n],dx=q[0]-p[0],dy=q[1]-p[1],len=Math.hypot(dx,dy);
+    if(len<1e-6)continue;
+    const nx=dy/len,ny=-dx/len;
+    if((nx*cs-ny*sn)+(nx*sn+ny*cs)<=.0001)continue;
+    faces.push([depth((p[0]+q[0])/2,(p[1]+q[1])/2),e,nx,ny]);
+  }
+  faces.sort((a,c)=>a[0]-c[0]);
+  for(const f of faces){
+    const e=f[1],nd=Math.max(0,f[2]*E.sx+f[3]*E.sy)*E.cosE;
+    const A=P0[e],B=P0[(e+1)%n],A1=P1[e],B1=P1[(e+1)%n];
     ctx.fillStyle=strc(lit(b.col,nd));
     ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(B[0],B[1]);ctx.lineTo(B1[0],B1[1]);ctx.lineTo(A1[0],A1[1]);ctx.closePath();ctx.fill();
-    if(b.win){
-      const c2=cor[(e+1)%4],len=Math.hypot(c2[0]-cor[e][0],c2[1]-cor[e][1]);
-      const cols=len>.6?3:2,nF=Math.max(1,Math.round((b.z1-b.z0)/.3));
-      const vx=A1[0]-A[0],vy=A1[1]-A[1],ux=B[0]-A[0],uy=B[1]-A[1];
-      const gl=lit([62,88,124],nd+.15),on=[],off=[];
-      for(let f=0;f<nF;f++)for(let k=0;k<cols;k++){
-        const u0=(k+.2)/cols,u1=(k+.8)/cols,v0=(f+.25)/nF,v1=(f+.75)/nF;
-        const q=[A[0]+ux*u0+vx*v0,A[1]+uy*u0+vy*v0,A[0]+ux*u1+vx*v0,A[1]+uy*u1+vy*v0,A[0]+ux*u1+vx*v1,A[1]+uy*u1+vy*v1,A[0]+ux*u0+vx*v1,A[1]+uy*u0+vy*v1];
-        (hh(b.id,e,f*7+k,S.hourB)<S.litProb?on:off).push(q);
+    if(b.win&&hPx>=6&&S.winBudget>0){
+      const edgePx=Math.hypot(B[0]-A[0],B[1]-A[1]);
+      if(edgePx>=7){
+        const cols=clamp(Math.round(edgePx/7),1,6),nF=clamp(Math.round(hPx/5.5),1,16);
+        S.winBudget-=cols*nF;
+        const vx=A1[0]-A[0],vy=A1[1]-A[1],ux=B[0]-A[0],uy=B[1]-A[1];
+        const gl=lit([62,88,124],nd+.15),on=[],off=[];
+        for(let fl=0;fl<nF;fl++)for(let k=0;k<cols;k++){
+          const u0=(k+.2)/cols,u1=(k+.8)/cols,v0=(fl+.25)/nF,v1=(fl+.75)/nF;
+          const q=[A[0]+ux*u0+vx*v0,A[1]+uy*u0+vy*v0,A[0]+ux*u1+vx*v0,A[1]+uy*u1+vy*v0,A[0]+ux*u1+vx*v1,A[1]+uy*u1+vy*v1,A[0]+ux*u0+vx*v1,A[1]+uy*u0+vy*v1];
+          (hh(b.id,e,fl*7+k,S.hourB)<S.litProb?on:off).push(q);
+        }
+        const paint=(arr)=>{ctx.beginPath();for(const q of arr){ctx.moveTo(q[0],q[1]);ctx.lineTo(q[2],q[3]);ctx.lineTo(q[4],q[5]);ctx.lineTo(q[6],q[7]);ctx.closePath()}ctx.fill()};
+        ctx.fillStyle=strc(gl);paint(off);
+        ctx.fillStyle="rgb(255,208,120)";paint(on);
       }
-      const paint=(arr)=>{ctx.beginPath();for(const q of arr){ctx.moveTo(q[0],q[1]);ctx.lineTo(q[2],q[3]);ctx.lineTo(q[4],q[5]);ctx.lineTo(q[6],q[7]);ctx.closePath()}ctx.fill()};
-      ctx.fillStyle=strc(gl);paint(off);
-      ctx.fillStyle="rgb(255,208,120)";paint(on);
     }
   }
-  // toit
   let top=lit(b.roof||b.col,E.sinE*.95+.05);
-  top=mixc(top,[b.roof?0:0,0,0],0);
-  const snowTop=lit([238,242,250],E.sinE);
-  top=mixc(top,snowTop,S.snow*.9);
+  top=mixc(top,lit([238,242,250],E.sinE),S.snow*.9);
   ctx.fillStyle=strc(top);
-  ctx.beginPath();ctx.moveTo(P1[0][0],P1[0][1]);for(let i=1;i<4;i++)ctx.lineTo(P1[i][0],P1[i][1]);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(P1[0][0],P1[0][1]);for(let i=1;i<n;i++)ctx.lineTo(P1[i][0],P1[i][1]);ctx.closePath();ctx.fill();
   if(b.antenna){
     const p=proj(b.cx,b.cy,b.z1),q=proj(b.cx,b.cy,b.z1+.55);
     ctx.strokeStyle="rgb(70,74,82)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();
@@ -435,15 +442,27 @@ function drawTree(t,ctx){
     ctx.fillStyle=strc(mixc(m,lit([240,244,250],.6),sn*.8));ctx.beginPath();ctx.arc(cx-rr*.15,cy-rr*.15,rr,0,6.3);ctx.fill();
   }
 }
-function drawCar(c,ctx){
+function carState(c){
+  if(c.path){
+    const P=c.path,lens=P.lens;let d=((c.s%P.total)+P.total)%P.total;
+    if(c.dir<0)d=P.total-d;
+    let i=1;while(i<lens.length-1&&lens[i]<d)i++;
+    const a=P.pts[i-1],b=P.pts[i],sl=lens[i]-lens[i-1]||1,t=clamp((d-lens[i-1])/sl,0,1);
+    let dx=(b[0]-a[0])/sl,dy=(b[1]-a[1])/sl;
+    if(c.dir<0){dx=-dx;dy=-dy}
+    const px=-dy*.04,py=dx*.04; // voie de droite
+    return{x:lerp(a[0],b[0],t)+px,y:lerp(a[1],b[1],t)+py,dx,dy};
+  }
   const x=c.axis==="x"?c.pos:c.c+c.dir*.17,y=c.axis==="x"?c.c+c.dir*.17:c.pos;
-  const L=.17,Wd=.085;
-  const b={x0:x-(c.axis==="x"?L:Wd),x1:x+(c.axis==="x"?L:Wd),y0:y-(c.axis==="x"?Wd:L),y1:y+(c.axis==="x"?Wd:L),z0:0,z1:.1,col:c.col,win:false,cx:x,cy:y};
-  drawBox(b,ctx);
+  return{x,y,dx:c.axis==="x"?c.dir:0,dy:c.axis==="x"?0:c.dir};
+}
+function drawCar(c,ctx){
+  const st=carState(c),L=c.path?.085:.17,Wd=c.path?.042:.085,nx=-st.dy,ny=st.dx;
+  const poly=[[st.x-st.dx*L-nx*Wd,st.y-st.dy*L-ny*Wd],[st.x+st.dx*L-nx*Wd,st.y+st.dy*L-ny*Wd],[st.x+st.dx*L+nx*Wd,st.y+st.dy*L+ny*Wd],[st.x-st.dx*L+nx*Wd,st.y-st.dy*L+ny*Wd]];
+  drawPoly({poly,z0:0,z1:c.path?.06:.1,col:c.col,win:false,cx:st.x,cy:st.y,id:0},ctx);
   const night=1-S.E.d+(S.cur.fog+S.cur.rain*.5)*.4;
   if(night>.15){
-    const dx=c.axis==="x"?c.dir:0,dy=c.axis==="x"?0:c.dir;
-    const f=proj(x+dx*(L+.12),y+dy*(L+.12),.06),K=S.K,al=clamp(night,0,1)*.55;
+    const f=proj(st.x+st.dx*(L+.1),st.y+st.dy*(L+.1),.05),K=S.K,al=clamp(night,0,1)*.55;
     ctx.globalCompositeOperation="lighter";
     const g=ctx.createRadialGradient(f[0],f[1],0,f[0],f[1],K*.6);g.addColorStop(0,"rgba(255,235,180,"+al+")");g.addColorStop(1,"rgba(255,235,180,0)");
     ctx.fillStyle=g;ctx.fillRect(f[0]-K*.6,f[1]-K*.6,K*1.2,K*1.2);
@@ -495,7 +514,7 @@ function drawCloud(ctx,c,wd,hy){
 /* ---------- Rendu principal ---------- */
 function render(){
   const ctx=S.ctx,W=S.W,H=S.H,E=S.E,cur=S.cur,hy=H*.42;
-  S.cs=Math.cos(S.rot);S.sn=Math.sin(S.rot);
+  S.cs=Math.cos(S.rot);S.sn=Math.sin(S.rot);S.winBudget=5000;
   // Ciel
   let[top,bot]=skyAt(E.a);
   const gray=mixc([26,30,42],[152,162,174],E.d).map(v=>v*(1-.4*cur.storm));
@@ -552,36 +571,53 @@ function render(){
   g=ctx.createRadialGradient(0,0,S.K*3,0,0,S.K*9);g.addColorStop(0,"rgba(0,0,0,.38)");g.addColorStop(1,"rgba(0,0,0,0)");
   ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,S.K*9,0,6.3);ctx.fill();ctx.restore();
 
-  // Dalle + tuiles
+  // Dalle + sol
   const L=S.layout;
-  drawBox({x0:-5.18,x1:5.18,y0:-5.18,y1:5.18,z0:-.55,z1:0,col:[118,108,98],win:false,cx:0,cy:0},ctx);
+  drawPoly({poly:rect(-5.18,-5.18,5.18,5.18),z0:-.55,z1:0,col:[118,108,98],win:false,cx:0,cy:0,id:0},ctx);
   const sn=S.snow,wet=S.wet,sc=lit([236,241,249],E.sinE);
   const tcol={
     road:mixc(mixc(lit([66,70,78],E.sinE),lit([50,60,82],E.sinE),wet*.35),sc,sn*.55),
     lot:mixc(lit([142,144,148],E.sinE),sc,sn*.9),
     grass:mixc(lit([90,146,78],E.sinE),sc,sn)
   };
-  for(const t of L.tiles){
-    const p=[proj(t.i-5,t.j-5,0),proj(t.i-4,t.j-5,0),proj(t.i-4,t.j-4,0),proj(t.i-5,t.j-4,0)];
-    const c=strc(tcol[t.type]);ctx.fillStyle=c;ctx.strokeStyle=c;ctx.lineWidth=.8;
-    ctx.beginPath();ctx.moveTo(p[0][0],p[0][1]);for(let k=1;k<4;k++)ctx.lineTo(p[k][0],p[k][1]);ctx.closePath();ctx.fill();ctx.stroke();
-  }
-  // Marquages
-  ctx.strokeStyle=strc(mixc(lit([225,215,150],E.sinE),sc,sn*.6));ctx.lineWidth=Math.max(1,S.K*.05);
-  ctx.beginPath();
-  for(const rr of L.roads){
-    const c=rr+.5-5;
-    for(let i=0;i<10;i++){
-      if(L.roads.includes(i))continue;
-      const a=proj(i-5+.3,c,0),b=proj(i-5+.7,c,0);ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);
-      const a2=proj(c,i-5+.3,0),b2=proj(c,i-5+.7,0);ctx.moveTo(a2[0],a2[1]);ctx.lineTo(b2[0],b2[1]);
+  let wc=mixc(mixc(bot,[44,98,150],.55),lit([44,98,150],.5),.4);wc=mixc(wc,sc,sn*.55);
+  const polyPath=pts=>{const p0=proj(pts[0][0],pts[0][1],0);ctx.moveTo(p0[0],p0[1]);for(let k=1;k<pts.length;k++){const p=proj(pts[k][0],pts[k][1],0);ctx.lineTo(p[0],p[1])}ctx.closePath()};
+  if(L.mode==="osm"){
+    ctx.save();
+    const q=[proj(-5,-5,0),proj(5,-5,0),proj(5,5,0),proj(-5,5,0)];
+    ctx.beginPath();ctx.moveTo(q[0][0],q[0][1]);for(let k=1;k<4;k++)ctx.lineTo(q[k][0],q[k][1]);ctx.closePath();
+    ctx.fillStyle=strc(tcol.lot);ctx.fill();ctx.clip();
+    ctx.fillStyle=strc(tcol.grass);ctx.beginPath();for(const p of L.parks)polyPath(p);ctx.fill();
+    ctx.fillStyle=strc(wc);ctx.beginPath();for(const p of L.water)polyPath(p);ctx.fill();
+    ctx.lineCap="round";ctx.lineJoin="round";
+    ctx.strokeStyle=strc(tcol.road);
+    for(const wb of L.rdBuckets){
+      ctx.lineWidth=Math.max(1.4,wb.w*S.K*1.25);ctx.beginPath();
+      for(const rd of wb.list){const p0=proj(rd.pts[0][0],rd.pts[0][1],0);ctx.moveTo(p0[0],p0[1]);for(let k=1;k<rd.pts.length;k++){const p=proj(rd.pts[k][0],rd.pts[k][1],0);ctx.lineTo(p[0],p[1])}}
+      ctx.stroke();
     }
-  }
-  ctx.stroke();
-  // Bassin
-  {
+    ctx.strokeStyle=strc(mixc(lit([225,215,150],E.sinE),sc,sn*.6));ctx.lineWidth=1;ctx.setLineDash([5,6]);ctx.beginPath();
+    for(const rd of L.rdMajor){const p0=proj(rd.pts[0][0],rd.pts[0][1],0);ctx.moveTo(p0[0],p0[1]);for(let k=1;k<rd.pts.length;k++){const p=proj(rd.pts[k][0],rd.pts[k][1],0);ctx.lineTo(p[0],p[1])}}
+    ctx.stroke();ctx.setLineDash([]);
+    ctx.restore();
+  }else{
+    for(const t of L.tiles){
+      const p=[proj(t.i-5,t.j-5,0),proj(t.i-4,t.j-5,0),proj(t.i-4,t.j-4,0),proj(t.i-5,t.j-4,0)];
+      const c=strc(tcol[t.type]);ctx.fillStyle=c;ctx.strokeStyle=c;ctx.lineWidth=.8;
+      ctx.beginPath();ctx.moveTo(p[0][0],p[0][1]);for(let k=1;k<4;k++)ctx.lineTo(p[k][0],p[k][1]);ctx.closePath();ctx.fill();ctx.stroke();
+    }
+    ctx.strokeStyle=strc(mixc(lit([225,215,150],E.sinE),sc,sn*.6));ctx.lineWidth=Math.max(1,S.K*.05);
+    ctx.beginPath();
+    for(const rr of L.roads){
+      const c=rr+.5-5;
+      for(let i=0;i<10;i++){
+        if(L.roads.includes(i))continue;
+        const a=proj(i-5+.3,c,0),b=proj(i-5+.7,c,0);ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);
+        const a2=proj(c,i-5+.3,0),b2=proj(c,i-5+.7,0);ctx.moveTo(a2[0],a2[1]);ctx.lineTo(b2[0],b2[1]);
+      }
+    }
+    ctx.stroke();
     const pts=[];for(let k=0;k<28;k++){const a=k/28*6.2832;pts.push(proj(Math.cos(a)*.55,Math.sin(a)*.55,.015))}
-    let wc=mixc(mixc(bot,[44,98,150],.55),lit([44,98,150],.5),.4);wc=mixc(wc,sc,sn*.55);
     ctx.fillStyle=strc(wc);ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(const p of pts)ctx.lineTo(p[0],p[1]);ctx.closePath();ctx.fill();
     if(S.cur.rain>.05||S.cur.storm){ctx.strokeStyle="rgba(255,255,255,.35)";ctx.lineWidth=1;
       for(let k=0;k<3;k++){const ph=(S.t*.9+k/3)%1,rr=ph*.5,pp=[];for(let q=0;q<16;q++){const a=q/16*6.2832;pp.push(proj(Math.cos(a)*rr+.1*k-.1,Math.sin(a)*rr,.02))}
@@ -595,7 +631,7 @@ function render(){
       for(const b of L.boxes){
         if(!b.sh)continue;
         const lenA=Math.min(2.6,b.z0/tn),lenB=Math.min(2.6,b.z1/tn),pts=[];
-        for(const[px,py]of[[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1]]){
+        for(const[px,py]of b.poly){
           pts.push(proj(px-E.sx*lenA,py-E.sy*lenA,0));pts.push(proj(px-E.sx*lenB,py-E.sy*lenB,0));
         }
         const h=hull(pts);ctx.moveTo(h[0][0],h[0][1]);for(let k=1;k<h.length;k++)ctx.lineTo(h[k][0],h[k][1]);ctx.closePath();
@@ -607,11 +643,11 @@ function render(){
   const items=[];
   for(const b of L.boxes)items.push([depth(b.cx,b.cy)+(b.z0>0?.01:0),0,b]);
   for(const t of L.trees)items.push([depth(t.x,t.y),1,t]);
-  for(const c of S.cars){const x=c.axis==="x"?c.pos:c.c,y=c.axis==="x"?c.c:c.pos;items.push([depth(x,y),2,c])}
+  for(const c of S.cars){const st=carState(c);items.push([depth(st.x,st.y),2,c])}
   for(const l of L.lamps)items.push([depth(l.x,l.y),3,l]);
   items.sort((a,b)=>a[0]-b[0]);
   for(const it of items){
-    if(it[1]===0)drawBox(it[2],ctx);else if(it[1]===1)drawTree(it[2],ctx);else if(it[1]===2)drawCar(it[2],ctx);else drawLamp(it[2],ctx);
+    if(it[1]===0)drawPoly(it[2],ctx);else if(it[1]===1)drawTree(it[2],ctx);else if(it[1]===2)drawCar(it[2],ctx);else drawLamp(it[2],ctx);
   }
   // Précipitations
   if(cur.rain>.03){
@@ -665,7 +701,7 @@ function update(dt){
   for(const p of S.flakes){p.v+=p.s*dt;p.u+=(S.cur.wind/60)*.04*dt;if(p.v>1){p.v-=1;p.u=Math.random()}if(p.u>1)p.u-=1}
   // voitures
   const slow=1-.45*Math.max(S.snow>.3?1:0,S.cur.storm,S.cur.rain);
-  for(const c of S.cars){c.pos+=c.dir*c.sp*slow*dt;if(c.pos>5.6)c.pos=-5.6;if(c.pos<-5.6)c.pos=5.6}
+  for(const c of S.cars){if(c.path){c.s+=c.sp*slow*dt}else{c.pos+=c.dir*c.sp*slow*dt;if(c.pos>5.6)c.pos=-5.6;if(c.pos<-5.6)c.pos=5.6}}
   // rotation
   if(!S.drag){S.idle+=dt;if(S.idle>3)S.rot+=dt*.04}
   // HUD
@@ -722,6 +758,135 @@ function init(){
   window.addEventListener("resize",()=>{if(S.running)resize()});
   if(!S.layout)setData(courant||VILLES[0],S.data);
 }
+
+/* ---------- Vraie ville (OpenStreetMap via Overpass) ---------- */
+const HALF=330,MPU=66,VZ=2.0; // demi-côté (m), mètres par unité, exagération verticale
+const HW={motorway:13,trunk:12,primary:11,secondary:10,tertiary:8.5,unclassified:7,residential:7,living_street:6,service:4,pedestrian:5};
+function osmQuery(v){
+  const dLat=HALF/110574,dLon=HALF/(111320*Math.cos(v.lat*Math.PI/180));
+  const bb=[v.lat-dLat,v.lon-dLon,v.lat+dLat,v.lon+dLon].map(x=>x.toFixed(5)).join(",");
+  return '[out:json][timeout:25];(way["building"]('+bb+');way["highway"]('+bb+');way["natural"="water"]('+bb+');way["waterway"="riverbank"]('+bb+');way["leisure"~"park|garden|pitch|playground"]('+bb+');way["landuse"~"grass|forest|recreation_ground|cemetery|meadow"]('+bb+'););out geom tags;';
+}
+function inPoly(x,y,P){let c=false;for(let i=0,j=P.length-1;i<P.length;j=i++){if((P[i][1]>y)!==(P[j][1]>y)&&x<(P[j][0]-P[i][0])*(y-P[i][1])/(P[j][1]-P[i][1])+P[i][0])c=!c}return c}
+function buildOSM(json,v){
+  const kx=111320*Math.cos(v.lat*Math.PI/180),ky=110574,rnd=mulberry(hstr(v.n+"osm"));
+  const P=g=>g.map(p=>[(p.lon-v.lon)*kx/MPU,(p.lat-v.lat)*ky/MPU]);
+  const L={mode:"osm",boxes:[],trees:[],lamps:[],parks:[],water:[],rdBuckets:[],rdMajor:[],tiles:[],roads:[]};
+  const blds=[],roads=[];let id=1;
+  for(const el of json.elements||[]){
+    if(el.type!=="way"||!el.geometry||el.geometry.length<2)continue;
+    const t=el.tags||{},pts=P(el.geometry);
+    if(t.building&&pts.length>=4){
+      let ring=pts.slice();const a0=ring[0],an=ring[ring.length-1];
+      if(a0[0]===an[0]&&a0[1]===an[1])ring.pop();
+      if(ring.length<3)continue;
+      let area=0;for(let i=0;i<ring.length;i++){const p=ring[i],q=ring[(i+1)%ring.length];area+=p[0]*q[1]-q[0]*p[1]}
+      area/=2;if(area<0){ring.reverse();area=-area}
+      const m2=area*MPU*MPU;if(m2<30)continue;
+      let cx=0,cy=0;for(const p of ring){cx+=p[0];cy+=p[1]}cx/=ring.length;cy/=ring.length;
+      if(Math.abs(cx)>5||Math.abs(cy)>5)continue;
+      blds.push({el,t,ring:ring.map(p=>[clamp(p[0],-5.02,5.02),clamp(p[1],-5.02,5.02)]),m2,cx,cy});
+    }else if(t.highway&&HW[t.highway]){
+      if(pts.some(p=>Math.abs(p[0])<5.5&&Math.abs(p[1])<5.5))roads.push({pts,w:HW[t.highway]/MPU,hw:t.highway,id:el.id});
+    }else if((t.natural==="water"||t.waterway==="riverbank")&&pts.length>=4){
+      L.water.push(pts);
+    }else if((t.leisure||t.landuse)&&pts.length>=4){
+      L.parks.push(pts);
+    }
+  }
+  blds.sort((a,b)=>(a.cx*a.cx+a.cy*a.cy)-(b.cx*b.cx+b.cy*b.cy));
+  for(const b of blds.slice(0,380)){
+    const t=b.t,ty=t.building;
+    let hm=parseFloat(t.height);
+    if(!(hm>0)){
+      let lv=parseFloat(t["building:levels"]);
+      if(!(lv>0)){
+        const r2=hh(b.el.id%9973,1,2,3);
+        if(/house|detached|semidetached|terrace|residential|duplex/.test(ty))lv=2+(r2<.3?1:0);
+        else if(/garage|shed|roof|carport|hut|service/.test(ty))lv=1;
+        else if(/industrial|warehouse|retail|supermarket/.test(ty))lv=1+(r2<.4?1:0);
+        else if(/apartments|dormitory/.test(ty))lv=4+((r2*4)|0);
+        else lv=b.m2>600?3+((r2*5)|0):2+((r2*3)|0);
+      }
+      hm=lv*3.3;
+    }
+    const z1=clamp(hm/MPU*VZ,.06,5),r3=hh(b.el.id%9973,4,5,6);
+    let col;
+    if(/commercial|office|retail|supermarket|hotel/.test(ty))col=mixc([150,165,185],[190,200,210],r3);
+    else if(/industrial|warehouse/.test(ty))col=mixc([150,152,156],[175,175,170],r3);
+    else if(/apartments|dormitory|residential/.test(ty))col=mixc([176,120,98],[205,170,140],r3);
+    else col=PAL[(r3*PAL.length)|0];
+    L.boxes.push({id:id++,poly:b.ring,z0:0,z1,col,win:z1>.12,sh:true,cx:b.cx,cy:b.cy,roof:z1<.45?[[96,74,70],[74,80,90],[112,92,82]][(r3*3)|0]:null,antenna:z1>2.2});
+  }
+  // routes : paquets par largeur
+  const bk={};
+  for(const r of roads){const key=Math.round(r.w*100);(bk[key]=bk[key]||{w:r.w,list:[]}).list.push(r);if(r.w>=.13)L.rdMajor.push(r)}
+  L.rdBuckets=Object.values(bk).sort((a,b)=>b.w-a.w);
+  // arbres : parcs + rues
+  for(const pk of L.parks){
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;for(const p of pk){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])}
+    const n=Math.min(26,Math.floor((x1-x0)*(y1-y0)*14));
+    for(let k=0,tries=0;k<n&&tries<n*6&&L.trees.length<260;tries++){
+      const x=lerp(x0,x1,rnd()),y=lerp(y0,y1,rnd());
+      if(Math.abs(x)>4.95||Math.abs(y)>4.95||!inPoly(x,y,pk))continue;
+      L.trees.push({x,y,s:.5+rnd()*.35,conif:rnd()<.4,ph:rnd()*6,col:[48+rnd()*30,110+rnd()*40,56+rnd()*20]});k++;
+    }
+  }
+  const cars=[];
+  for(const r of roads){
+    const lens=[0];for(let i=1;i<r.pts.length;i++)lens.push(lens[i-1]+Math.hypot(r.pts[i][0]-r.pts[i-1][0],r.pts[i][1]-r.pts[i-1][1]));
+    const total=lens[lens.length-1];if(total<.2)continue;
+    if(r.hw!=="motorway"&&r.hw!=="service"){
+      for(let i=1;i<r.pts.length;i++){
+        const a=r.pts[i-1],b=r.pts[i],sl=lens[i]-lens[i-1];
+        for(let d=.3;d<sl;d+=.55){
+          if(L.trees.length>=330&&L.lamps.length>=40)break;
+          const t=d/sl,x=lerp(a[0],b[0],t),y=lerp(a[1],b[1],t),nx=-(b[1]-a[1])/sl,ny=(b[0]-a[0])/sl,off=r.w/2+.06,side=rnd()<.5?1:-1;
+          const px=x+nx*off*side,py=y+ny*off*side;
+          if(Math.abs(px)>4.9||Math.abs(py)>4.9)continue;
+          if((r.hw==="residential"||r.hw==="tertiary")&&rnd()<.45&&L.trees.length<330)L.trees.push({x:px,y:py,s:.5+rnd()*.3,conif:false,ph:rnd()*6,col:[52+rnd()*30,118+rnd()*34,58+rnd()*20]});
+          else if((r.hw==="primary"||r.hw==="secondary"||r.hw==="tertiary")&&rnd()<.3&&L.lamps.length<40)L.lamps.push({x:px,y:py});
+        }
+      }
+    }
+    if(r.w>=.1&&total>.8&&r.hw!=="service")cars.push({path:{pts:r.pts,lens,total},len:total});
+  }
+  const cc=[[200,60,50],[60,110,190],[230,230,235],[40,40,46],[230,180,50],[90,150,100]];
+  L.carPaths=cars.slice(0,60).sort(()=>rnd()-.5).slice(0,14).map(c=>({path:c.path,s:rnd()*c.len,dir:rnd()<.5?1:-1,sp:.35+rnd()*.3,col:cc[(rnd()*cc.length)|0]}));
+  return L;
+}
+async function fetchOSM(v){
+  const q=osmQuery(v),eps=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
+  let lastErr;
+  for(const ep of eps){
+    try{
+      const res=await Promise.race([fetch(ep+"?data="+encodeURIComponent(q)),new Promise((_,rej)=>setTimeout(()=>rej(new Error("délai dépassé")),25000))]);
+      if(!res.ok)throw new Error("HTTP "+res.status);
+      return await res.json();
+    }catch(e){lastErr=e}
+  }
+  throw lastErr;
+}
+const OSMC={};
+async function loadOSM(v){
+  const key=v.n+"|"+v.lat.toFixed(3);
+  S.osmKey=key;
+  const apply=L=>{if(S.osmKey!==key)return;S.layout=L;S.cars=L.carPaths;S.mapMsg="";refreshMsg()};
+  if(OSMC[key]){apply(OSMC[key]);return}
+  S.mapMsg="Chargement du vrai plan de la ville…";refreshMsg();
+  try{
+    const json=await fetchOSM(v);
+    const L=buildOSM(json,v);
+    if(L.boxes.length<5)throw new Error("peu de bâtiments");
+    OSMC[key]=L;apply(L);
+  }catch(e){
+    if(S.osmKey===key){S.mapMsg="Plan réel indisponible ("+(e&&e.message||"erreur")+") : ville stylisée affichée.";refreshMsg()}
+  }
+}
+function refreshMsg(){
+  const m=[S.noWx?"Météo en direct indisponible : mode démonstration.":"",S.mapMsg||""].filter(Boolean).join(" ");
+  const el=$("#demo");el.hidden=!m;el.textContent=m;
+}
 const WX=[["auto","Auto"],["clair","☀️ Clair"],["nuageux","☁️ Nuageux"],["pluie","🌧️ Pluie"],["neige","❄️ Neige"],["orage","⛈️ Orage"],["brouillard","🌫️ Brouillard"]];
 function chipsWx(){
   $("#wxchips").innerHTML=WX.map(([k,l])=>`<div class="chip${S.override===k?" on":""}" data-k="${k}">${l}</div>`).join("");
@@ -736,6 +901,7 @@ function setData(v,d){
     S.layout=buildCity(v.n+"|"+Math.round(v.lat*10));
     S.cars=makeCars(mulberry(hstr(v.n+"c")));
     S.hseed=(hstr(v.n)%100)/10;
+    loadOSM(v);
   }
   let first=true;
   if(d){
@@ -744,11 +910,11 @@ function setData(v,d){
     const snowing=!!SNOW[d.current.weather_code];
     if(snowing)S.snow=Math.max(S.snow,.5);
     const t=new Date(d.current.time+":00Z");S.moon=(((t.getTime()-947182440000)/86400000)%29.530588853+29.530588853)%29.530588853/29.530588853;
-    $("#demo").hidden=true;
+    S.noWx=false;refreshMsg();
   }else{
     S.sr=7;S.ss=16.9;const n=new Date();S.liveBase=n.getHours()+n.getMinutes()/60;S.liveStamp=Date.now();
     S.moon=(((n.getTime()-947182440000)/86400000)%29.530588853+29.530588853)%29.530588853/29.530588853;
-    $("#demo").hidden=false;$("#demo").textContent="Météo en direct indisponible : mode démonstration. Choisis un temps ci-dessus et fais glisser l'heure.";
+    S.noWx=true;refreshMsg();
   }
   if(!S.override||S.override==="auto")S.live=S.live||!S.play;
   if(S.running||S.cv)hud();
