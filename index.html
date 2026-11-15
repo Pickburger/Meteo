@@ -102,7 +102,7 @@ footer{text-align:center;color:var(--sub);font-size:12px;margin-top:18px}
    MÉTÉO
    ========================================================= */
 const VILLES=[
- {n:"Montréal",lat:45.5088,lon:-73.5878},{n:"Québec",lat:46.8123,lon:-71.2145},
+ {n:"Montréal",lat:45.5088,lon:-73.5878,mlat:45.5040,mlon:-73.5620},{n:"Québec",lat:46.8123,lon:-71.2145,mlat:46.8122,mlon:-71.2060},
  {n:"Laval",lat:45.6066,lon:-73.7124},{n:"Gatineau",lat:45.4765,lon:-75.7013},
  {n:"Longueuil",lat:45.5312,lon:-73.5181},{n:"Sherbrooke",lat:45.4042,lon:-71.8929},
  {n:"Trois-Rivières",lat:46.343,lon:-72.5477},{n:"Saguenay",lat:48.4279,lon:-71.0686},
@@ -506,7 +506,7 @@ function drawCloud(ctx,c,wd,hy){
   ctx.globalAlpha=al*(1-S.cur.fog*.5);
   for(const pass of[0,1]){
     ctx.fillStyle=strc(pass?col:sh);
-    for(const p of c.puffs){ctx.beginPath();ctx.arc(x+p.dx*u,y+(p.dy+(pass?-.12:.1))*u,p.r*u,0,6.3);ctx.fill()}
+    ctx.beginPath();for(const p of c.puffs){const px=x+p.dx*u,py=y+(p.dy+(pass?-.12:.1))*u;ctx.moveTo(px+p.r*u,py);ctx.arc(px,py,p.r*u,0,6.3)}ctx.fill();
   }
   ctx.globalAlpha=1;
 }
@@ -627,7 +627,7 @@ function render(){
   if(E.d>.08){
     const al=.34*E.d*(1-.85*cur.cloud);
     if(al>.01){
-      const tn=Math.tan(E.e);ctx.beginPath();
+      const tn=Math.tan(E.e);ctx.save();{const q=[proj(-5,-5,0),proj(5,-5,0),proj(5,5,0),proj(-5,5,0)];ctx.beginPath();ctx.moveTo(q[0][0],q[0][1]);for(let k=1;k<4;k++)ctx.lineTo(q[k][0],q[k][1]);ctx.closePath();ctx.clip()}ctx.beginPath();
       for(const b of L.boxes){
         if(!b.sh)continue;
         const lenA=Math.min(2.6,b.z0/tn),lenB=Math.min(2.6,b.z1/tn),pts=[];
@@ -636,7 +636,7 @@ function render(){
         }
         const h=hull(pts);ctx.moveTo(h[0][0],h[0][1]);for(let k=1;k<h.length;k++)ctx.lineTo(h[k][0],h[k][1]);ctx.closePath();
       }
-      ctx.fillStyle="rgba(10,14,30,"+al+")";ctx.fill();
+      ctx.fillStyle="rgba(10,14,30,"+al+")";ctx.fill();ctx.restore();
     }
   }
   // Objets triés en profondeur
@@ -679,7 +679,7 @@ function update(dt){
   else if(S.live){S.simH=(S.liveBase+(Date.now()-S.liveStamp)/3.6e6)%24}
   S.simH=((S.simH%24)+24)%24;
   S.hourB=Math.floor(S.simH);
-  const tg=wxAt(S.simH),k=Math.min(1,dt*1.6);
+  const tg=wxAt(S.simH),k=S.snap?1:Math.min(1,dt*1.6);S.snap=false;
   for(const key of["cloud","rain","snow","fog","storm","wind"])S.cur[key]+=(tg[key]-S.cur[key])*k;
   S.tg=tg;
   if(tg.snow>.2)S.snow=Math.min(1,S.snow+dt*.04*tg.snow);else S.snow=Math.max(0,S.snow-dt*.02);
@@ -719,7 +719,7 @@ function hud(){
 
 /* ---------- Boucle & taille ---------- */
 function resize(){
-  const cv=S.cv,W=Math.max(280,Math.floor($("#stage").clientWidth||360)),H=Math.round(Math.min(560,W*1.3)),dpr=Math.min(2,window.devicePixelRatio||1);
+  const cv=S.cv,W=Math.max(280,Math.floor($("#stage").clientWidth||360)),H=Math.round(Math.min(540,W*1.2)),dpr=Math.min(2,window.devicePixelRatio||1);
   if(W===S.W&&H===S.H&&cv.width===W*dpr)return;
   S.W=W;S.H=H;cv.width=W*dpr;cv.height=H*dpr;cv.style.height=H+"px";
   S.ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -761,7 +761,7 @@ function init(){
 }
 
 /* ---------- Vraie ville (OpenStreetMap via Overpass) ---------- */
-const HALF=280,MPU=56,VZ=1.8; // demi-côté (m), mètres par unité, exagération verticale
+const HALF=450,MPU=90,VZ=1.8; // demi-côté (m), mètres par unité, exagération verticale
 const HW={motorway:13,trunk:12,primary:11,secondary:10,tertiary:8.5,unclassified:7,residential:7,living_street:6,service:4,pedestrian:5};
 function bboxStr(v){
   const dLat=HALF/110574,dLon=HALF/(111320*Math.cos(v.lat*Math.PI/180));
@@ -794,7 +794,7 @@ function buildOSM(json,v){
       if(Math.abs(cx)>5||Math.abs(cy)>5)continue;
       blds.push({el,t,ring:ring.map(p=>[clamp(p[0],-5.02,5.02),clamp(p[1],-5.02,5.02)]),m2,cx,cy});
     }else if(t.highway&&HW[t.highway]){
-      if(pts.some(p=>Math.abs(p[0])<5.5&&Math.abs(p[1])<5.5))roads.push({pts,w:HW[t.highway]/MPU,hw:t.highway,id:el.id});
+      if(Math.min(...pts.map(p=>p[0]))<5.5&&Math.max(...pts.map(p=>p[0]))>-5.5&&Math.min(...pts.map(p=>p[1]))<5.5&&Math.max(...pts.map(p=>p[1]))>-5.5)roads.push({pts,w:HW[t.highway]/MPU,hw:t.highway,id:el.id});
     }else if((t.natural==="water"||t.waterway==="riverbank")&&pts.length>=4){
       L.water.push(pts);
     }else if((t.leisure||t.landuse)&&pts.length>=4){
@@ -802,7 +802,7 @@ function buildOSM(json,v){
     }
   }
   blds.sort((a,b)=>(a.cx*a.cx+a.cy*a.cy)-(b.cx*b.cx+b.cy*b.cy));
-  for(const b of blds.slice(0,380)){
+  for(const b of blds.slice(0,520)){
     const t=b.t,ty=t.building;
     let hm=parseFloat(t.height);
     if(!(hm>0)){
@@ -817,13 +817,13 @@ function buildOSM(json,v){
       }
       hm=lv*3.3;
     }
-    const z1=clamp(hm/MPU*VZ,.06,5),r3=hh(b.el.id%9973,4,5,6);
+    const z1=clamp(hm/MPU*VZ,.06,5),r3=hh(b.el.id%9973,4,5,6),mnH=parseFloat(t.min_height)||0,z0=mnH>0?clamp(mnH/MPU*VZ,0,z1-.03):0;
     let col;
     if(/commercial|office|retail|supermarket|hotel/.test(ty))col=mixc([150,165,185],[190,200,210],r3);
     else if(/industrial|warehouse/.test(ty))col=mixc([150,152,156],[175,175,170],r3);
     else if(/apartments|dormitory|residential/.test(ty))col=mixc([176,120,98],[205,170,140],r3);
     else col=PAL[(r3*PAL.length)|0];
-    L.boxes.push({id:id++,poly:b.ring,z0:0,z1,col,win:z1>.12,sh:true,cx:b.cx,cy:b.cy,roof:z1<.45?[[96,74,70],[74,80,90],[112,92,82]][(r3*3)|0]:null,antenna:z1>2.2});
+    L.boxes.push({id:id++,poly:b.ring,z0,z1,col,win:z1>.12,sh:true,cx:b.cx,cy:b.cy,roof:z1<.45?[[96,74,70],[74,80,90],[112,92,82]][(r3*3)|0]:null,antenna:z1>2.2});
   }
   // routes : paquets par largeur
   const bk={};
@@ -862,6 +862,117 @@ function buildOSM(json,v){
   L.carPaths=cars.slice(0,60).sort(()=>rnd()-.5).slice(0,14).map(c=>({path:c.path,s:rnd()*c.len,dir:rnd()<.5?1:-1,sp:.35+rnd()*.3,col:cc[(rnd()*cc.length)|0]}));
   return L;
 }
+/* ---- Tuiles vectorielles OpenFreeMap (données OpenStreetMap) : décodeur MVT minimal ---- */
+function rdVar(st){let r=0,m=1,b;do{b=st.b[st.p++];r+=(b&127)*m;m*=128}while(b&128);return r}
+function skipF(st,wt){if(wt===0)rdVar(st);else if(wt===2){const l=rdVar(st);st.p+=l}else if(wt===1)st.p+=8;else if(wt===5)st.p+=4;else throw new Error("protobuf invalide")}
+const U8=new TextDecoder();
+function decValue(buf,s,e){
+  const st={b:buf,p:s};let v=null;
+  while(st.p<e){const tag=rdVar(st),f=Math.floor(tag/8),wt=tag&7;
+    if(f===1&&wt===2){const l=rdVar(st);v=U8.decode(buf.subarray(st.p,st.p+l));st.p+=l}
+    else if(f===2&&wt===5){v=new DataView(buf.buffer,buf.byteOffset+st.p,4).getFloat32(0,true);st.p+=4}
+    else if(f===3&&wt===1){v=new DataView(buf.buffer,buf.byteOffset+st.p,8).getFloat64(0,true);st.p+=8}
+    else if((f===4||f===5)&&wt===0)v=rdVar(st);
+    else if(f===6&&wt===0){const z=rdVar(st);v=(z%2)?-(z+1)/2:z/2}
+    else if(f===7&&wt===0)v=!!rdVar(st);
+    else skipF(st,wt)}
+  return v;
+}
+function decFeature(buf,s,e){
+  const st={b:buf,p:s},F={tags:[],type:0,geom:[]};
+  while(st.p<e){const tag=rdVar(st),f=Math.floor(tag/8),wt=tag&7;
+    if(f===2&&wt===2){const l=rdVar(st),end=st.p+l;while(st.p<end)F.tags.push(rdVar(st))}
+    else if(f===3&&wt===0)F.type=rdVar(st);
+    else if(f===4&&wt===2){const l=rdVar(st),end=st.p+l;while(st.p<end)F.geom.push(rdVar(st))}
+    else skipF(st,wt)}
+  return F;
+}
+function decLayer(buf,s,e){
+  const st={b:buf,p:s},L={name:"",keys:[],vals:[],feats:[],extent:4096};
+  while(st.p<e){const tag=rdVar(st),f=Math.floor(tag/8),wt=tag&7;
+    if(f===1&&wt===2){const l=rdVar(st);L.name=U8.decode(buf.subarray(st.p,st.p+l));st.p+=l}
+    else if(f===2&&wt===2){const l=rdVar(st);L.feats.push(decFeature(buf,st.p,st.p+l));st.p+=l}
+    else if(f===3&&wt===2){const l=rdVar(st);L.keys.push(U8.decode(buf.subarray(st.p,st.p+l)));st.p+=l}
+    else if(f===4&&wt===2){const l=rdVar(st);L.vals.push(decValue(buf,st.p,st.p+l));st.p+=l}
+    else if(f===5&&wt===0)L.extent=rdVar(st);
+    else skipF(st,wt)}
+  return L;
+}
+function decodeMVT(buf){
+  const st={b:buf,p:0},layers={};
+  while(st.p<buf.length){const tag=rdVar(st),f=Math.floor(tag/8),wt=tag&7;
+    if(f===3&&wt===2){const l=rdVar(st),L=decLayer(buf,st.p,st.p+l);layers[L.name]=L;st.p+=l}
+    else skipF(st,wt)}
+  return layers;
+}
+function geomParts(g){
+  const parts=[];let cur=null,x=0,y=0,i=0;
+  while(i<g.length){
+    const cmd=g[i++],id=cmd&7,cnt=Math.floor(cmd/8);
+    if(id===1){for(let k=0;k<cnt;k++){const dx=g[i++],dy=g[i++];x+=(dx>>>1)^-(dx&1);y+=(dy>>>1)^-(dy&1);cur=[[x,y]];parts.push(cur)}}
+    else if(id===2){for(let k=0;k<cnt;k++){const dx=g[i++],dy=g[i++];x+=(dx>>>1)^-(dx&1);y+=(dy>>>1)^-(dy&1);cur.push([x,y])}}
+  }
+  return parts;
+}
+const featProps=(F,L)=>{const o={};for(let i=0;i+1<F.tags.length;i+=2)o[L.keys[F.tags[i]]]=L.vals[F.tags[i+1]];return o};
+let TID=1;
+function tileToEls(layers,tx,ty,z,out){
+  const n=Math.pow(2,z);
+  const ll=(L,p)=>{const X=(tx+p[0]/L.extent)/n,Y=(ty+p[1]/L.extent)/n;return{lon:X*360-180,lat:Math.atan(Math.sinh(Math.PI*(1-2*Y)))*180/Math.PI}};
+  const polys=(name,fn)=>{const L=layers[name];if(!L)return;
+    for(const F of L.feats){if(F.type!==3)continue;const pr=featProps(F,L),tags=fn(pr);if(!tags)continue;
+      for(const r of geomParts(F.geom)){
+        if(r.length<3)continue;let a=0;for(let i=0;i<r.length;i++){const p=r[i],q=r[(i+1)%r.length];a+=p[0]*q[1]-q[0]*p[1]}
+        if(a<=0)continue; // anneaux intérieurs ignorés
+        const geometry=r.concat([r[0]]).map(p=>ll(L,p));
+        out.push({type:"way",id:TID++,tags,geometry});
+      }}};
+  polys("building",p=>{
+    if(p.hide_3d===true)return null;
+    const t={building:"yes"};
+    if(p.render_height>0)t.height=String(p.render_height);
+    if(p.render_min_height>0)t.min_height=String(p.render_min_height);
+    return t;
+  });
+  polys("water",()=>({natural:"water"}));
+  polys("park",()=>({leisure:"park"}));
+  polys("landcover",p=>/grass|wood|forest|scrub/.test(p.class||"")?{landuse:"grass"}:null);
+  const T=layers.transportation;
+  if(T){
+    const MAP={motorway:"motorway",trunk:"trunk",primary:"primary",secondary:"secondary",tertiary:"tertiary",minor:"residential",service:"service",busway:"service",pedestrian:"pedestrian"};
+    for(const F of T.feats){
+      if(F.type!==2)continue;const pr=featProps(F,T),hw=MAP[pr.class];
+      if(!hw||pr.brunnel==="tunnel")continue;
+      for(const part of geomParts(F.geom)){if(part.length<2)continue;out.push({type:"way",id:TID++,tags:{highway:hw},geometry:part.map(p=>ll(T,p))})}
+    }
+  }
+}
+const withTimeout=(p,ms,label)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(label+" délai")),ms))]);
+async function maybeGunzip(u8){
+  if(u8.length>2&&u8[0]===0x1f&&u8[1]===0x8b){
+    if(typeof DecompressionStream==="undefined")throw new Error("gzip non supporté");
+    const ab=await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+    return new Uint8Array(ab);
+  }
+  return u8;
+}
+async function fetchTiles(v,onProgress){
+  const tj=await withTimeout(fetch("https://tiles.openfreemap.org/planet").then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}),12000,"openfreemap");
+  const tpl=tj.tiles&&tj.tiles[0];if(!tpl)throw new Error("modèle de tuile absent");
+  const z=14,dLat=HALF/110574,dLon=HALF/(111320*Math.cos(v.lat*Math.PI/180)),n=Math.pow(2,z);
+  const tX=lon=>Math.floor((lon+180)/360*n),tY=lat=>{const r=lat*Math.PI/180;return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n)};
+  const x0=tX(v.lon-dLon),x1=tX(v.lon+dLon),y0=tY(v.lat+dLat),y1=tY(v.lat-dLat),jobs=[];
+  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)jobs.push([x,y]);
+  const els=[];let done=0;
+  await Promise.all(jobs.map(async([x,y])=>{
+    const url=tpl.replace("{z}",z).replace("{x}",x).replace("{y}",y);
+    const buf=await withTimeout(fetch(url).then(r=>{if(!r.ok)throw new Error("tuile HTTP "+r.status);return r.arrayBuffer()}),20000,"tuile");
+    tileToEls(decodeMVT(await maybeGunzip(new Uint8Array(buf))),x,y,z,els);
+    done++;onProgress&&onProgress(done,jobs.length);
+  }));
+  if(!els.length)throw new Error("tuiles vides");
+  return{elements:els};
+}
 const OVP=["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
 const host=ep=>ep.split("/")[2];
 function tryOne(ep,q,ms){
@@ -897,7 +1008,7 @@ async function pingAll(){
   }));
   return res.join(", ");
 }
-async function fetchOSM(v,onProgress){
+async function fetchOverpass(v,onProgress){
   const Q=quadQueries(v),els=new Map();let done=0,okB=0,totB=Q.filter(x=>x.kind==="b").length,lastErr;
   await Promise.all(Q.map(async(x,i)=>{
     try{
@@ -910,6 +1021,12 @@ async function fetchOSM(v,onProgress){
   if(okB<Math.ceil(totB/2)){const e=new Error("délai ou refus des serveurs");e.diag=true;e.detail=lastErr&&lastErr.message;throw e}
   return{elements:[...els.values()],partial:okB<totB};
 }
+async function fetchOSM(v,onProgress){
+  let te;
+  try{return await fetchTiles(v,onProgress)}catch(e){te=e}
+  try{return await fetchOverpass(v,onProgress)}
+  catch(e){e.detail=(e.detail?e.detail+" ; ":"")+"tuiles : "+(te&&te.message||te);throw e}
+}
 const OSMC={};
 async function loadOSM(v,force){
   const key=v.n+"|"+v.lat.toFixed(3);
@@ -917,9 +1034,10 @@ async function loadOSM(v,force){
   const apply=L=>{if(S.osmKey!==key)return;S.layout=L;S.cars=L.carPaths;S.mapMsg="";refreshMsg()};
   if(!force&&OSMC[key]){apply(OSMC[key]);return}
   S.mapMsg="Chargement du vrai plan de la ville…";refreshMsg();
+  const vm=Object.assign({},v,{lat:v.mlat!=null?v.mlat:v.lat,lon:v.mlon!=null?v.mlon:v.lon});
   try{
-    const json=await fetchOSM(v,(d,n)=>{if(S.osmKey===key){S.mapMsg="Chargement du vrai plan de la ville… "+d+"/"+n;refreshMsg()}});
-    const L=buildOSM(json,v);
+    const json=await fetchOSM(vm,(d,n)=>{if(S.osmKey===key){S.mapMsg="Chargement du vrai plan de la ville… "+d+"/"+n;refreshMsg()}});
+    const L=buildOSM(json,vm);
     if(L.boxes.length<5)throw new Error("peu de bâtiments trouvés");
     OSMC[key]=L;apply(L);
   }catch(e){
@@ -942,7 +1060,7 @@ function chipsWx(){
 function parseH(s){return +s.slice(11,13)+ +s.slice(14,16)/60}
 function setData(v,d){
   const same=S.city&&S.city.n===v.n&&S.city.lat===v.lat;
-  S.city=v;S.data=d;
+  S.city=v;S.data=d;S.snap=true;
   if(!same||!S.layout){
     S.layout=buildCity(v.n+"|"+Math.round(v.lat*10));
     S.cars=makeCars(mulberry(hstr(v.n+"c")));
@@ -967,12 +1085,12 @@ function setData(v,d){
 }
 function start(){init();if(S.running)return;S.running=true;S.last=performance.now();S.raf=requestAnimationFrame(loop)}
 function stop(){S.running=false;cancelAnimationFrame(S.raf)}
-return{start,stop,setData,_S:S,_update:()=>{},_render:()=>{}};
+return{start,stop,setData,_S:S,_t:{decodeMVT,tileToEls,buildOSM}};
 })();
 
 /* Démarrage */
 let dep=VILLES[0];
-try{const s=JSON.parse(localStorage.getItem("meteo-ville"));if(s&&s.lat)dep=s}catch(e){}
+try{const s=JSON.parse(localStorage.getItem("meteo-ville"));if(s&&s.lat)dep=VILLES.find(v=>v.n===s.n)||s}catch(e){}
 courant=dep;chips();charger(dep);
 </script>
 </body>
