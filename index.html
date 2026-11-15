@@ -102,7 +102,7 @@ footer{text-align:center;color:var(--sub);font-size:12px;margin-top:18px}
    MÉTÉO
    ========================================================= */
 const VILLES=[
- {n:"Montréal",lat:45.5088,lon:-73.5878,mlat:45.5040,mlon:-73.5620},{n:"Québec",lat:46.8123,lon:-71.2145,mlat:46.8122,mlon:-71.2060},
+ {n:"Montréal",lat:45.5088,lon:-73.5878,mlat:45.5025,mlon:-73.5600,lm:[{n:"Place Ville Marie",lat:45.5018,lon:-73.5690},{n:"Basilique Notre-Dame",lat:45.5045,lon:-73.5566}],far:[{n:"Mont Royal",lat:45.5049,lon:-73.5877,h:233,w:2600}]},{n:"Québec",lat:46.8123,lon:-71.2145,mlat:46.8120,mlon:-71.2049,lm:[{n:"Château Frontenac",lat:46.8119,lon:-71.2049}],far:[]},
  {n:"Laval",lat:45.6066,lon:-73.7124},{n:"Gatineau",lat:45.4765,lon:-75.7013},
  {n:"Longueuil",lat:45.5312,lon:-73.5181},{n:"Sherbrooke",lat:45.4042,lon:-71.8929},
  {n:"Trois-Rivières",lat:46.343,lon:-72.5477},{n:"Saguenay",lat:48.4279,lon:-71.0686},
@@ -514,7 +514,7 @@ function drawCloud(ctx,c,wd,hy){
 /* ---------- Rendu principal ---------- */
 function render(){
   const ctx=S.ctx,W=S.W,H=S.H,E=S.E,cur=S.cur,hy=H*.42;
-  S.cs=Math.cos(S.rot);S.sn=Math.sin(S.rot);S.winBudget=5000;
+  S.cs=Math.cos(S.rot);S.sn=Math.sin(S.rot);S.winBudget=5000;S.farLabels=[];
   // Ciel
   let[top,bot]=skyAt(E.a);
   const gray=mixc([26,30,42],[152,162,174],E.d).map(v=>v*(1-.4*cur.storm));
@@ -558,6 +558,18 @@ function render(){
   };
   ridge(H*.07,H*.012,S.hseed,[104,124,156],S.snow*.55);
   ridge(H*.045,H*.004,S.hseed*1.7,[62,96,74],S.snow*.9);
+  // Montagnes lointaines placées selon leur vraie direction
+  {const FL=S.layout&&S.layout.far;
+   if(FL)for(const m of FL){
+    const c=S.cs,sn2=S.sn,d=Math.hypot(m.dx,m.dy),mr0=m.dx*c-m.dy*sn2,mr1=m.dx*sn2+m.dy*c;
+    const f=(-mr0-mr1)/(Math.SQRT2*d),rr=(mr0-mr1)/(Math.SQRT2*d);
+    if(f<.2)continue;
+    const ppr=W*.55,ang=Math.atan2(rr,f),x=W/2+ang*ppr,wd=(m.w/d)*ppr,hp=Math.max(10,(m.h-30)/d*ppr*2.5);
+    if(x+wd/2<0||x-wd/2>W)continue;
+    ctx.fillStyle=strc(mixc(mixc(lit([70,110,82],E.sinE*.55),lit(snowW,E.sinE*.55),S.snow*.75),bot,.3));
+    ctx.beginPath();ctx.moveTo(x-wd/2,hy+3);ctx.bezierCurveTo(x-wd*.28,hy-hp*1.2,x+wd*.28,hy-hp*1.2,x+wd/2,hy+3);ctx.closePath();ctx.fill();
+    S.farLabels.push([m.n,x,hy-hp*.9-8]);
+   }}
   // Sol
   const gcol=mixc(lit([92,128,76],E.sinE*.9),lit([232,238,246],E.sinE*.9),S.snow);
   const gcol2=mixc(gcol,bot,.45);
@@ -649,6 +661,14 @@ function render(){
   for(const it of items){
     if(it[1]===0)drawPoly(it[2],ctx);else if(it[1]===1)drawTree(it[2],ctx);else if(it[1]===2)drawCar(it[2],ctx);else drawLamp(it[2],ctx);
   }
+  // Étiquettes des repères
+  {ctx.font="600 11px -apple-system,system-ui,sans-serif";ctx.textAlign="center";
+   const tag=(txt,x,y)=>{const tw=ctx.measureText(txt).width;ctx.fillStyle="rgba(10,18,30,.74)";ctx.fillRect(x-tw/2-5,y-13,tw+10,18);ctx.fillStyle="#fff";ctx.fillText(txt,x,y)};
+   if(L.marks)for(const m of L.marks){const b=proj(m.x,m.y,m.z),t=[b[0],b[1]-34];
+     ctx.strokeStyle="rgba(255,255,255,.8)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(b[0],b[1]);ctx.lineTo(t[0],t[1]+5);ctx.stroke();
+     ctx.fillStyle="#ffcf5a";ctx.beginPath();ctx.arc(b[0],b[1],2.5,0,6.3);ctx.fill();tag(m.n,t[0],t[1])}
+   for(const f of S.farLabels)tag(f[0],f[1],f[2]);
+   ctx.textAlign="start"}
   // Précipitations
   if(cur.rain>.03){
     const n=Math.min(S.rain.length,Math.floor(cur.rain*S.rain.length)),tilt=clamp(cur.wind/60,0,1)*.35+.05;
@@ -761,7 +781,7 @@ function init(){
 }
 
 /* ---------- Vraie ville (OpenStreetMap via Overpass) ---------- */
-const HALF=450,MPU=90,VZ=1.8; // demi-côté (m), mètres par unité, exagération verticale
+const HALF=750,MPU=150,VZ=1.8; // demi-côté (m), mètres par unité, exagération verticale
 const HW={motorway:13,trunk:12,primary:11,secondary:10,tertiary:8.5,unclassified:7,residential:7,living_street:6,service:4,pedestrian:5};
 function bboxStr(v){
   const dLat=HALF/110574,dLon=HALF/(111320*Math.cos(v.lat*Math.PI/180));
@@ -802,7 +822,7 @@ function buildOSM(json,v){
     }
   }
   blds.sort((a,b)=>(a.cx*a.cx+a.cy*a.cy)-(b.cx*b.cx+b.cy*b.cy));
-  for(const b of blds.slice(0,520)){
+  for(const b of blds.slice(0,700)){
     const t=b.t,ty=t.building;
     let hm=parseFloat(t.height);
     if(!(hm>0)){
@@ -859,6 +879,9 @@ function buildOSM(json,v){
     if(r.w>=.1&&total>.8&&r.hw!=="service")cars.push({path:{pts:r.pts,lens,total},len:total});
   }
   const cc=[[200,60,50],[60,110,190],[230,230,235],[40,40,46],[230,180,50],[90,150,100]];
+  L.marks=(v.lm||[]).map(m=>({n:m.n,x:(m.lon-v.lon)*kx/MPU,y:(m.lat-v.lat)*ky/MPU})).filter(m=>Math.abs(m.x)<5&&Math.abs(m.y)<5);
+  for(const m of L.marks){let z=.25;for(const b of L.boxes)if(Math.hypot(b.cx-m.x,b.cy-m.y)<.3)z=Math.max(z,b.z1);m.z=z}
+  L.far=(v.far||[]).map(m=>({n:m.n,dx:(m.lon-v.lon)*kx,dy:(m.lat-v.lat)*ky,h:m.h,w:m.w}));
   L.carPaths=cars.slice(0,60).sort(()=>rnd()-.5).slice(0,14).map(c=>({path:c.path,s:rnd()*c.len,dir:rnd()<.5?1:-1,sp:.35+rnd()*.3,col:cc[(rnd()*cc.length)|0]}));
   return L;
 }
